@@ -1,0 +1,6 @@
+[tools]
+zig = "master"
+zls = "master"
+
+[tasks]
+hello = "echo hello from mise"
