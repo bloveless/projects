@@ -41,10 +41,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    const clap = b.dependency("clap", .{
-        .target = target,
-        .optimize = optimize,
-    });
+    const argsParser = b.dependency("args", .{ .target = target, .optimize = optimize });
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -84,7 +81,7 @@ pub fn build(b: *std.Build) void {
                 // can be extremely useful in case of collisions (which can happen
                 // importing modules from different packages).
                 .{ .name = "projects", .module = mod },
-                .{ .name = "clap", .module = clap.module("clap") },
+                .{ .name = "args", .module = argsParser.module("args") },
             },
             .link_libc = true,
         }),

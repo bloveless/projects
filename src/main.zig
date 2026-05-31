@@ -1,4 +1,5 @@
 const std = @import("std");
+const argsParser = @import("args");
 const Io = std.Io;
 
 const projects = @import("projects");
@@ -12,61 +13,69 @@ pub fn main(init: std.process.Init) !void {
     // In order to do I/O operations need an `Io` instance.
     const io = init.io;
 
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    const stdout_writer = &stdout_file_writer.interface;
+    defer stdout_writer.flush() catch {};
+
+    const Options = struct {
+        depth: usize = 3,
+        help: bool = false,
+
+        pub const shorthands = .{ .d = "depth" };
+
+        pub const meta = .{
+            .name = "projects",
+            .usage_summary = "[OPTIONS] path",
+            .full_text =
+            \\This is the full projects description text,
+            \\
+            \\Arguments:
+            \\  path  the path to your projects directory to scan for known projects
+            ,
+            .option_docs = .{
+                .depth = "the number of folders deep to scan for projects",
+                .help = "show this help",
+            },
+        };
+    };
+
+    const options = argsParser.parseForCurrentProcess(Options, init.io, init.gpa, init.minimal.args, .print) catch |err| switch (err) {
+        error.InvalidArguments => return argsParser.printHelp(Options, "projects", stdout_writer),
+        else => return err,
+    };
+    defer options.deinit();
+
+    if (options.options.help or options.positionals.len < 1) {
+        try argsParser.printHelp(Options, options.executable_name orelse "projects", stdout_writer);
+        return stdout_writer.flush();
+    }
+
+    std.debug.print("executable name: {?s}\n", .{options.executable_name});
+
+    std.debug.print("parsed options:\n", .{});
+    inline for (std.meta.fields(@TypeOf(options.options))) |fld| {
+        std.debug.print("\t{s} = {any}\n", .{
+            fld.name,
+            @field(options.options, fld.name),
+        });
+    }
+
+    std.debug.print("parsed positionals:\n", .{});
+    for (options.positionals) |arg| {
+        std.debug.print("\t'{s}'\n", .{arg});
+    }
+
     // Initialize libgit2 - always call this first
     _ = c.git_libgit2_init();
     defer _ = c.git_libgit2_shutdown();
 
-    // First we specify what parameters our program can take.
-    // We can use `parseParamsComptime` to parse a string into an array of `Param(Help)`.
-    const params = comptime clap.parseParamsComptime(
-        \\-h, --help        Display this help and exit.
-        \\-d, --depth <int> The depth of directories to scan for projects. Defaults to three levels deep.
-        \\<path>            The path to scan for projects
-        \\
-    );
-
-    const parsers = .{
-        .int = clap.parsers.int(usize, 10),
-        .path = clap.parsers.string,
-    };
-
-    // Initialize our diagnostics, which can be used for reporting useful errors.
-    // This is optional. You can also pass `.{}` to `clap.parse` if you don't
-    // care about the extra information `Diagnostics` provides.
-    var diag = clap.Diagnostic{};
-    var res = clap.parse(clap.Help, &params, parsers, init.minimal.args, .{
-        .diagnostic = &diag,
-        .allocator = init.gpa,
-    }) catch |err| {
-        // Report useful error and exit.
-        try diag.reportToFile(io, .stderr(), err);
-        return err;
-    };
-    defer res.deinit();
-
-    if (res.args.help != 0) {
-        return clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
-    }
-
-    const directory = res.positionals[0] orelse {
-        return try clap.helpToFile(io, .stdout(), clap.Help, &params, .{});
-    };
-
-    const depth = res.args.depth orelse 3;
+    const directory = options.positionals[0];
+    const depth = options.options.depth;
 
     try scanDirectoryDepth(init.gpa, init.io, directory, depth);
 
-    // Stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    var stdout_buffer: [1024]u8 = undefined;
-    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
-    const stdout_writer = &stdout_file_writer.interface;
-
-    try projects.printAnotherMessage(stdout_writer);
-
     std.debug.print("\n", .{});
-    try stdout_writer.flush(); // Don't forget to flush!
 }
 
 pub fn scanDirectoryDepth(
@@ -233,7 +242,7 @@ fn printOriginUrl(repo: ?*c.git_repository) !void {
     var remote: ?*c.git_remote = null;
     const err = c.git_remote_lookup(&remote, repo, "origin");
     if (err < 0) {
-        std.debug.print("No 'origin' remote found.\n", .{});
+        std.debug.print("\n\nNo 'origin' remote found.\n", .{});
         return;
     }
     defer c.git_remote_free(remote);
